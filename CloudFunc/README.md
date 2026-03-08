@@ -1,346 +1,221 @@
 # CloudFunc
 
-CloudFunc is a lightweight **serverless function execution platform** built using **Node.js, Docker, RabbitMQ, and PostgreSQL**.  
-It allows users to **register functions as Docker images and invoke them asynchronously**, similar to a simplified version of AWS Lambda.
+> Lightweight serverless function execution platform built with Node.js, Docker, RabbitMQ, and PostgreSQL — similar to a simplified AWS Lambda.
 
 ---
 
 ## Architecture
 
-CloudFunc follows an **event-driven microservices architecture**.
-
 ```
-User
-↓
-Gateway
-↓
-Function Registry (PostgreSQL)
-↓
-RabbitMQ Queue
-↓
-Worker
-↓
-Container Manager
-↓
-Docker Containers
+User → Gateway → Function Registry → RabbitMQ → Worker → Container Manager → Docker Containers
 ```
 
-Each component is **decoupled**, allowing scalable and fault-tolerant execution.
+| Component | Role | Port |
+|---|---|---|
+| Gateway | Entry point for all client requests | 8080 |
+| Function Registry | Stores function metadata (PostgreSQL) | 3000 |
+| Worker | Consumes jobs from RabbitMQ | — |
+| Container Manager | Manages Docker containers | 4001 |
+| Function Runner | Runs functions inside containers | 4000 |
+
+---
+
+## Tech Stack
+
+| Technology | Purpose |
+|---|---|
+| Node.js | Backend services |
+| Express.js | REST APIs |
+| Docker | Function execution environment |
+| RabbitMQ | Asynchronous message queue |
+| PostgreSQL | Metadata and job status storage |
+| concurrently | Run all services with one command |
+
+---
+
+## Project Structure
+
+```
+CloudFunc/
+├── gateway/
+│   └── gateway.js
+├── registry/
+│   ├── index.js
+│   ├── db.js
+│   ├── schema.sql
+│   └── routes/
+│       ├── functions.js
+│       └── jobs.js
+├── worker service/
+│   ├── Worker/
+│   │   └── index.js
+│   ├── container-manager/
+│   │   └── manager.js
+│   └── function-runner/
+│       └── runner.js
+└── package.json
+```
+
+---
+
+## Prerequisites
+
+- Node.js v18+
+- Docker Desktop (must be running)
+- npm
+
+---
+
+## Setup & Start Guide
+
+### Step 1: Clone the Repository
+
+```bash
+git clone https://github.com/j1y4-j/Group-A-Cloudfunc.git
+cd Group-A-Cloudfunc/CloudFunc
+```
+
+### Step 2: Install Dependencies
+
+```bash
+npm install
+```
+
+### Step 3: Start PostgreSQL
+
+Run once. Skip if already running.
+
+```bash
+docker run -d \
+  -p 5433:5432 \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=cloudfunc \
+  postgres
+```
+
+### Step 4: Start RabbitMQ
+
+Run once. Skip if already running.
+
+```bash
+docker run -d \
+  --name cloudfunc-rabbitmq \
+  -p 5672:5672 \
+  -p 15672:15672 \
+  rabbitmq:3-management
+```
+
+On subsequent runs, just restart existing containers:
+
+```bash
+docker start cloudfunc-rabbitmq
+docker start <postgres-container-id>   # get ID from: docker ps -a
+```
+
+### Step 5: Initialize the Database
+
+Run once to create the required tables:
+
+```bash
+docker exec -i <postgres-container-id> psql -U postgres -d cloudfunc < registry/schema.sql
+```
+
+### Step 6: Start All Services
+
+```bash
+npm start
+```
+
+This starts all 5 services simultaneously: Gateway, Registry, Worker, Container Manager, and Function Runner.
+
+---
+
+## API Usage
+
+### 1. Register a Function
+
+```
+POST http://localhost:8080/register
+```
+
+```json
+{
+  "name": "sum",
+  "runtime": "nodejs",
+  "code": "const p = JSON.parse(process.env.PAYLOAD || '{}'); console.log(p.a + p.b);"
+}
+```
+
+### 2. Invoke a Function
+
+```
+POST http://localhost:8080/invoke
+```
+
+```json
+{
+  "functionName": "sum",
+  "payload": { "a": 5, "b": 7 }
+}
+```
+
+Response:
+
+```json
+{ "jobId": "87cbd05a-44bb-4865-b2a5-83c6bb5840ce" }
+```
+
+### 3. Check Job Status
+
+```
+GET http://localhost:8080/jobs/:jobId
+```
+
+| Status | Meaning |
+|---|---|
+| `queued` | Job received, waiting for worker |
+| `running` | Worker is executing the function |
+| `completed` | Function ran successfully |
+| `failed` | All retry attempts exhausted |
+
+---
+
+## Example Functions
+
+**Sum two numbers:**
+
+```js
+const payload = JSON.parse(process.env.PAYLOAD || '{}');
+console.log(payload.a + payload.b);
+```
+
+**Reverse a string:**
+
+```js
+const payload = JSON.parse(process.env.PAYLOAD || '{}');
+console.log(payload.text.split('').reverse().join(''));
+```
+
+---
+
+## Troubleshooting
+
+| Error | Fix |
+|---|---|
+| `ECONNREFUSED` on port 8080 | Ensure `npm start` is running and RabbitMQ is up |
+| Port 4000 already in use | `manager.js` uses 4001, `runner.js` uses 4000 — do not change either |
+| `relation 'jobs' does not exist` | Run Step 5 (schema.sql) against your PostgreSQL container |
+| `Worker/index.js` not found | Run `npm start` from the `CloudFunc` root directory |
+| RabbitMQ connection error | Run `docker start cloudfunc-rabbitmq` |
 
 ---
 
 ## Features
 
 - Serverless function registration via API
-- Docker-based function execution
+- Docker-based isolated function execution
 - Asynchronous job processing with RabbitMQ
 - Warm container reuse to reduce cold start latency
-- Job status tracking using PostgreSQL
+- Job status tracking with PostgreSQL
 - Worker retry mechanism for failed jobs
 - Recovery of queued jobs after worker restart
-- Automatic cleanup of temporary build files
-
----
-
-## Tech Stack
-
-| Technology | Purpose               |
-| ---------- | --------------------- |
-| Node.js    | Backend services      |
-| Express.js | REST APIs             |
-| Docker     | Function execution    |
-| RabbitMQ   | Message queue         |
-| PostgreSQL | Metadata storage      |
-| Axios      | Service communication |
-
----
-
-## Services
-
-### Gateway
-
-Handles all client interactions.
-
-Responsibilities:
-
-- Register functions
-- Build Docker images
-- Invoke functions
-- Publish jobs to RabbitMQ
-- Fetch job status
-
-Endpoints:
-
-```
-POST /register
-POST /invoke
-GET /jobs/:jobId
-```
----
-
-### Function Registry
-
-Stores metadata about:
-
-- Registered functions
-- Submitted jobs
-- Execution status
-- Results
-
-Backed by **PostgreSQL**.
-
----
-
-### Worker
-
-Consumes jobs from RabbitMQ and executes them.
-
-Responsibilities:
-
-- Pull jobs from queue
-- Update job status
-- Call container manager
-- Retry failed jobs
-
----
-
-### Container Manager
-
-Handles Docker containers for function execution.
-
-Responsibilities:
-
-- Start containers
-- Reuse warm containers
-- Execute functions inside containers
-- Cleanup idle containers
-
----
-
-## Function Execution Flow
-
-### 1. Register Function
-
-```
-POST /register
-```
-Gateway:
-
-- Creates temporary build folder
-- Writes user code
-- Builds Docker image
-- Stores metadata in registry
-- Deletes temp folder
-
----
-
-### 2. Invoke Function
-
-```
-POST /invoke
-```
-Gateway:
-
-- Verifies function exists
-- Creates job entry
-- Pushes job to RabbitMQ
-
----
-
-### 3. Worker Processes Job
-
-Worker:
-
-- Consumes job from queue
-- Marks job as running
-- Sends execution request to container manager
-
----
-
-### 4. Container Execution
-
-Container manager:
-
-- Fetches Docker image
-- Starts or reuses container
-- Executes function
-
----
-
-### 5. Job Completion
-
-Worker updates job status:
-
-```
-queued → running → completed / failed
-```
-
-User can query result:
-
-```
-GET /jobs/:jobId
-```
-
----
-
-## Project Structure
-```
-cloudfunc/
-│
-├── gateway/
-│ └── gateway.js
-│
-├── registry/
-│ ├── index.js
-│ ├── db.js
-│ └── routes/
-│ ├── functions.js
-│ └── jobs.js
-│
-├── worker/
-│ └── index.js
-│
-├── container-manager/
-│ └── manager.js
-
-```
----
-
-## Setup
-
-### Clone Repository
-
-```bash
-git clone https://github.com/j1y4-j/Group-A-Cloudfunc.git
-cd CloudFunc
-```
-
-### Install Dependencies
-
-Run inside each service folder:
-
-```bash
-npm install
-
-```
-
-### Start PostgreSQL (Docker)
-
-```bash
-docker run -d \
--p 5433:5432 \
--e POSTGRES_PASSWORD=postgres \
--e POSTGRES_DB=cloudfunc \
-postgres
-```
-
-### Start RabbitMQ
-
-```bash
-docker run -d \
---name cloudfunc-rabbitmq \
--p 5672:5672 \
--p 15672:15672 \
-rabbitmq:3-management
-
-```
-
-### Start Services
-
-Run each service in separate terminals:
-
-```bash
-node registry/index.js
-node gateway/gateway.js
-node worker/index.js
-node container-manager/manager.js
-```
-
-### Example Usage
-
-#### Register Function
-```
-POST /register
-```
-```
-
-{
-  "name": "sum",
-  "runtime": "nodejs",
-  "code": "const payload = JSON.parse(process.env.PAYLOAD || '{}'); console.log(payload.a + payload.b);"
-}
-```
-
-#### Invoke Function
-
-```
-POST /invoke
-```
-```
-
-{
-  "functionName": "sum",
-  "payload": {
-    "a": 5,
-    "b": 7
-  }
-}
-```
-
-#### Response:
-
-```
-
-{
-  "jobId": "uuid"
-}
-```
-
-#### Check Job Status
-
-```
-GET /jobs/:jobId
-```
-#### Example Functions
-
-Sum
-
-```
-
-const payload = JSON.parse(process.env.PAYLOAD || "{}");
-console.log(payload.a + payload.b);
-```
-
-Reverse String
-
-```
-
-const payload = JSON.parse(process.env.PAYLOAD || "{}");
-console.log(payload.text.split("").reverse().join(""));
-```
-
----
-
-## Future Improvements
-
-- Horizontal worker scaling
-
-- Distributed container orchestration
-
-- Image registry integration
-
-- Function versioning
-
-- Web dashboard for monitoring
-
----
-
-## Conclusion
-
-### CloudFunc – Serverless Execution Platform
-
-- Built a serverless function execution platform using Node.js, Docker, RabbitMQ, and PostgreSQL.
-
-- Designed an event-driven microservices architecture for asynchronous job processing.
-
-- Implemented warm container pooling and fault-tolerant worker execution.
