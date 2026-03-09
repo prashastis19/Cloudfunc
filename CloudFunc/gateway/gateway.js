@@ -4,6 +4,7 @@ const axios = require("axios");
 const amqp = require("amqplib");
 const { v4: uuidv4 } = require("uuid");
 const fs = require("fs");
+const path = require("path");
 const { exec } = require("child_process");
 
 const app = express();
@@ -21,7 +22,6 @@ let channel;
 
 async function startServer() {
   try {
-
     const connection = await amqp.connect(RABBITMQ_URL);
     channel = await connection.createChannel();
 
@@ -38,7 +38,6 @@ async function startServer() {
     process.exit(1);
   }
 }
-
 
 
 // --------------------------------
@@ -60,13 +59,34 @@ app.post("/register", async (req, res) => {
 
   try {
 
-    // create temp folder
+    // Create temp folder
     fs.mkdirSync(dir, { recursive: true });
 
-    // write user function
-    fs.writeFileSync(`${dir}/index.js`, code);
+    // ✅ CHANGED: User's function code goes into handler.js (not index.js)
+    // User must export a function like:  module.exports = async (input) => { ... }
+    fs.writeFileSync(`${dir}/handler.js`, code);
 
-    // correct Dockerfile for warm containers
+    // ✅ NEW: Copy runner.js from gateway's own folder into the Docker build folder
+    // runner.js is the runtime API server that will run inside every container
+    const runnerSource = path.join(__dirname, "runner.js");
+    fs.copyFileSync(runnerSource, `${dir}/runner.js`);
+
+    // ✅ NEW: Write package.json so npm install fetches express inside the container
+    fs.writeFileSync(
+      `${dir}/package.json`,
+      JSON.stringify({
+        name: `function-${name}`,
+        version: "1.0.0",
+        main: "runner.js",
+        dependencies: {
+          express: "^4.18.2"
+        }
+      }, null, 2)
+    );
+
+    // ✅ CHANGED: Dockerfile now starts runner.js
+    // runner.js opens port 4000 and waits for POST /run requests
+    // No more infinite sleep loop - the runner keeps the container alive
     const dockerfile = `
 FROM node:18-alpine
 
@@ -74,8 +94,11 @@ WORKDIR /app
 
 COPY . .
 
-# keep container alive for warm execution
-CMD ["sh","-c","while true; do sleep 1000; done"]
+RUN npm install
+
+EXPOSE 4000
+
+CMD ["node", "runner.js"]
 `;
 
     fs.writeFileSync(`${dir}/Dockerfile`, dockerfile);
@@ -96,7 +119,7 @@ CMD ["sh","-c","while true; do sleep 1000; done"]
         console.log(stdout);
         console.log("✅ Docker image built:", imageName);
 
-        // store metadata in registry
+        // Store metadata in registry
         await axios.post(`${REGISTRY_URL}/functions`, {
           name,
           imageName,
@@ -118,7 +141,7 @@ CMD ["sh","-c","while true; do sleep 1000; done"]
 
       } finally {
 
-        // cleanup tmp folder
+        // Cleanup tmp folder
         fs.rmSync(dir, { recursive: true, force: true });
         console.log("🧹 Temp folder removed:", dir);
 
@@ -140,7 +163,6 @@ CMD ["sh","-c","while true; do sleep 1000; done"]
 });
 
 
-
 // --------------------------------
 // INVOKE FUNCTION
 // --------------------------------
@@ -159,17 +181,17 @@ app.post("/invoke", async (req, res) => {
 
     const jobId = uuidv4();
 
-    // verify function exists
+    // Verify function exists
     await axios.get(`${REGISTRY_URL}/functions/${functionName}`);
 
-    // create job
+    // Create job
     await axios.post(`${REGISTRY_URL}/jobs`, {
       jobId,
       functionName,
       payload
     });
 
-    // push job to RabbitMQ
+    // Push job to RabbitMQ
     channel.sendToQueue(
       "executions",
       Buffer.from(
@@ -198,7 +220,6 @@ app.post("/invoke", async (req, res) => {
   }
 
 });
-
 
 
 // --------------------------------
