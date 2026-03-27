@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CloudFunc</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="bg-orb orb-one"></div>
+  <div class="bg-orb orb-two"></div>
+  <div class="bg-grid"></div>
+  <div class="page-shell">
+    <header class="topbar">
+      <div class="brand-block">
+        <p class="eyebrow">CloudFunc</p>
+        <h1>Build. Search. Run.</h1>
+      </div>
+
+      <div class="topbar-actions">
+        <div class="status-pill" id="connection-pill">Checking</div>
+        <div class="user-summary">
+          <div>
+            <span class="summary-label">User</span>
+            <strong id="user-display">Guest</strong>
+          </div>
+          <button class="ghost-button danger" id="logout-btn" type="button">Logout</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="dashboard-grid">
+      <section class="panel panel-wide profile-panel reveal" data-reveal>
+        <div class="section-title">
+          <p class="eyebrow">Account</p>
+          <h2>Your Workspace</h2>
+        </div>
+
+        <div class="profile-grid">
+          <div class="info-card">
+            <span>Mail ID</span>
+            <strong id="user-email">Not signed in</strong>
+          </div>
+          <div class="info-card">
+            <span>Name</span>
+            <strong id="user-name">Guest</strong>
+          </div>
+          <div class="info-card">
+            <span>Functions</span>
+            <strong id="owned-functions-count">0</strong>
+          </div>
+        </div>
+
+        <div class="stats-grid" id="stats-grid"></div>
+      </section>
+
+      <section class="panel register-panel reveal" data-reveal>
+        <div class="section-title">
+          <p class="eyebrow">Register</p>
+          <h2>Add Function</h2>
+        </div>
+
+        <form id="register-form" class="form-grid">
+          <label>
+            Function Name
+            <input class="input" name="name" type="text" placeholder="addnumbers" required>
+          </label>
+
+          <label>
+            Runtime
+            <select class="input" name="runtime">
+              <option value="nodejs18">nodejs18</option>
+              <option value="nodejs20">nodejs20</option>
+            </select>
+          </label>
+
+          <label class="full-width">
+            Template
+            <select class="input" id="template-select">
+              <option value="">Start from scratch</option>
+            </select>
+          </label>
+
+          <label class="full-width">
+            Code
+            <textarea class="input code-area" name="code" id="code-editor" required spellcheck="false"></textarea>
+          </label>
+
+          <button class="primary-button full-width" type="submit">Register Function</button>
+        </form>
+      </section>
+
+      <section class="panel invoke-panel reveal" data-reveal>
+        <div class="section-title">
+          <p class="eyebrow">Invoke</p>
+          <h2>Run Function</h2>
+        </div>
+
+        <form id="function-lookup-form" class="search-row">
+          <input id="invoke-search" class="input" type="search" placeholder="Enter function name" required>
+          <button class="primary-button" type="submit">Search</button>
+        </form>
+
+        <div class="result-card empty" id="function-preview">
+          Search for a function to continue.
+        </div>
+
+        <form id="invoke-form" class="form-grid hidden">
+          <input id="invoke-function" name="functionName" type="hidden">
+
+          <label class="full-width">
+            Arguments
+            <textarea class="input code-area compact" id="payload-editor" name="payload" spellcheck="false">{
+  "a": 5,
+  "b": 10
+}</textarea>
+          </label>
+
+          <button class="primary-button full-width" type="submit">Run Function</button>
+        </form>
+      </section>
+
+      <section class="panel result-panel reveal" data-reveal>
+        <div class="section-title">
+          <p class="eyebrow">Result</p>
+          <h2>Latest Output</h2>
+        </div>
+
+        <div class="result-card" id="invoke-result">
+          No result yet.
+        </div>
+      </section>
+
+      <section class="panel panel-wide list-panel reveal" data-reveal>
+        <div class="section-head">
+          <div class="section-title">
+            <p class="eyebrow">Functions</p>
+            <h2>Your Functions</h2>
+          </div>
+          <div class="toolbar">
+            <input id="function-search" class="input" type="search" placeholder="Search functions">
+            <button class="ghost-button" id="refresh-functions-btn" type="button">Refresh</button>
+          </div>
+        </div>
+
+        <div class="function-list" id="function-list"></div>
+      </section>
+
+      <section class="panel panel-wide list-panel reveal" data-reveal>
+        <div class="section-head">
+          <div class="section-title">
+            <p class="eyebrow">Runs</p>
+            <h2>Recent Jobs</h2>
+          </div>
+          <div class="toolbar">
+            <input id="job-search" class="input" type="search" placeholder="Search jobs">
+            <select id="job-status-filter" class="input slim">
+              <option value="">All</option>
+              <option value="queued">Queued</option>
+              <option value="running">Running</option>
+              <option value="completed">Completed</option>
+              <option value="failed">Failed</option>
+            </select>
+            <button class="ghost-button" id="refresh-jobs-btn" type="button">Refresh</button>
+          </div>
+        </div>
+
+        <div class="job-list" id="jobs-list"></div>
+      </section>
+    </main>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <div class="auth-modal" id="auth-modal">
+    <div class="auth-card">
+      <p class="eyebrow">Access</p>
+      <h2>Login or Register</h2>
+
+      <div class="auth-tabs">
+        <button class="auth-tab active" data-auth-mode="login" type="button">Login</button>
+        <button class="auth-tab" data-auth-mode="register" type="button">Register</button>
+      </div>
+
+      <form id="auth-form" class="form-grid">
+        <label id="display-name-wrap" class="hidden full-width">
+          Name
+          <input class="input" name="displayName" type="text" placeholder="Your name">
+        </label>
+
+        <label class="full-width">
+          Mail ID
+          <input class="input" name="email" type="email" placeholder="name@example.com" required>
+        </label>
+
+        <label class="full-width">
+          Password
+          <input class="input" name="password" type="password" placeholder="Password" required>
+        </label>
+
+        <label id="confirm-password-wrap" class="hidden full-width">
+          Confirm Password
+          <input class="input" name="confirmPassword" type="password" placeholder="Confirm password">
+        </label>
+
+        <button class="primary-button full-width" type="submit" id="auth-submit">Login</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,391 +1,392 @@
-# ☁️ CloudFunc — Mini Serverless Platform
+# CloudFunc
 
-A lightweight Function-as-a-Service (FaaS) platform built from scratch using Node.js, Docker, RabbitMQ, and PostgreSQL. Inspired by AWS Lambda — deploy any JavaScript function, invoke it on demand, and get results asynchronously.
+CloudFunc is a lightweight serverless function execution platform built with Node.js, Docker, RabbitMQ, PostgreSQL, and a browser-based control panel.
 
----
+It lets a user:
 
-## 📌 What Is This?
+- register with mail ID and password
+- create functions from templates or custom handler code
+- invoke functions with JSON arguments
+- track queued, running, completed, and failed jobs
+- manage only their own functions and runs through JWT-protected APIs
 
-CloudFunc lets you:
-- **Register** any JavaScript function by sending its code over HTTP
-- **Invoke** that function with a payload
-- **Get the result** asynchronously via a job ID
+## Highlights
 
-You don't manage any servers. The platform handles spinning up Docker containers, executing your function inside them, and returning the result — just like a real serverless platform.
+- Multi-service architecture with gateway, registry, worker, and container manager
+- JWT-based authentication for frontend and API access
+- PostgreSQL-backed user, function, and job metadata
+- RabbitMQ queue for asynchronous execution
+- Docker-based isolated function execution
+- Warm container reuse for faster repeated invocations
+- Search-first frontend flow for registering, finding, and invoking functions
+- Live result updates and recent job history in the UI
 
----
+## Architecture
 
-## 🏗️ Architecture Overview
-
-```
-Client
-  │
-  ▼
-┌─────────────┐
-│   Gateway   │  :8080  — Entry point. Handles register, invoke, job status.
-└──────┬──────┘
-       │
-       ├──────────────────────────────────────┐
-       │                                      │
-       ▼                                      ▼
-┌─────────────┐                     ┌──────────────────┐
-│  Registry   │  :3000              │    RabbitMQ      │  :5672
-│ (PostgreSQL)│                     │  "executions"    │
-└─────────────┘                     └────────┬─────────┘
-                                             │
-                                             ▼
-                                    ┌─────────────────┐
-                                    │     Worker      │  (no port, consumer only)
-                                    └────────┬────────┘
-                                             │
-                                             ▼
-                                    ┌─────────────────────┐
-                                    │  Container Manager  │  :4001
-                                    └────────┬────────────┘
-                                             │
-                          ┌──────────────────┼──────────────────┐
-                          ▼                  ▼                  ▼
-                   [Container]         [Container]         [Container]
-                   add fn              multiply fn         divide fn
-                   port 7000           port 7001           port 7002
-                   runner.js           runner.js           runner.js
-                   handler.js          handler.js          handler.js
+```text
+Frontend UI
+    |
+    v
+Gateway (auth, frontend APIs, Docker build trigger)
+    |
+    +--> Registry (users, functions, jobs, analytics) --> PostgreSQL
+    |
+    +--> RabbitMQ queue --> Worker --> Container Manager --> Function Container
 ```
 
----
+### Service Responsibilities
 
-## 🧩 Services
+- `gateway/`
+  - serves the frontend
+  - handles login and registration
+  - signs and verifies JWT tokens
+  - builds Docker images for user functions
+  - exposes authenticated UI-facing APIs
 
-| Service | Port | Description |
-|---|---|---|
-| Gateway | 8080 | Client-facing API. Handles registration, invocation, job status |
-| Registry | 3000 | Stores function metadata and job records in PostgreSQL |
-| Worker | — | Consumes jobs from RabbitMQ, calls Container Manager |
-| Container Manager | 4001 | Manages Docker containers, calls runner via HTTP |
-| RabbitMQ | 5672 | Message queue holding pending execution jobs |
-| PostgreSQL | 5433 | Database for functions and jobs |
-| Runner (inside container) | 4000 | HTTP runtime server inside each function container |
+- `registry/`
+  - stores users, functions, jobs, and analytics in PostgreSQL
+  - auto-creates required tables on startup
 
----
+- `worker service/Worker/`
+  - consumes queued jobs from RabbitMQ
+  - updates job state in the registry
+  - retries failed executions
 
-## 🔄 How It Works
+- `worker service/container-manager/`
+  - starts or reuses function containers
+  - calls the runtime runner inside the container
+  - cleans up idle containers
 
-### Registering a Function
+- `worker service/function-runner/`
+  - contains the runtime entrypoint used inside each generated function container
 
-```
-POST /register
-{
-  "name": "add",
-  "runtime": "nodejs",
-  "code": "module.exports = async (input) => { return input.a + input.b; }"
-}
-```
+## Project Structure
 
-1. Gateway checks Registry — rejects immediately if function name already exists
-2. Creates a temp build folder with `handler.js`, `runner.js`, `package.json`, `Dockerfile`
-3. Builds Docker image `cloudfunc-add:latest`
-4. Stores metadata in Registry (PostgreSQL)
-5. Deletes temp folder
-
-### Invoking a Function
-
-```
-POST /invoke
-{
-  "functionName": "add",
-  "payload": { "a": 5, "b": 3 }
-}
-```
-
-1. Gateway creates a job (status: `queued`) in Registry
-2. Pushes job into RabbitMQ `executions` queue
-3. Returns `jobId` immediately — client does not block
-
-### Execution Flow
-
-1. Worker picks job from RabbitMQ
-2. Updates job status → `running`
-3. Calls Container Manager `POST /execute`
-4. Container Manager starts (or reuses) a Docker container
-5. Polls `GET /health` until runner is ready
-6. Calls `POST /run` on the runner inside the container
-7. Runner calls `handler.js` with the payload
-8. Result flows back up the chain
-9. Worker updates job → `completed` with result
-
-### Checking Result
-
-```
-GET /jobs/:jobId
-```
-
-Returns job status and result once completed.
-
----
-
-## 📦 Project Structure
-
-```
-Group-A-Cloudfunc/
-│
+```text
+CloudFunc/
 ├── gateway/
-│   ├── gateway.js          # Entry point API (register, invoke, jobs)
-│   └── runner.js           # Runtime server copied into every Docker image
-│
+│   ├── gateway.js
+│   ├── runner.js
+│   ├── .env
+│   └── public/
 ├── registry/
-│   ├── index.js            # Registry HTTP server
-│   ├── db.js               # PostgreSQL connection pool
+│   ├── index.js
+│   ├── db.js
+│   ├── schema.sql
+│   ├── .env
 │   └── routes/
-│       ├── functions.js    # GET/POST /functions
-│       └── jobs.js         # GET/POST/PATCH /jobs
-│
-├── worker/
-│   └── worker.js           # RabbitMQ consumer with retry + recovery
-│
-├── container-manager/
-│   └── container-manager.js  # Docker management + HTTP runner calls
-│
+├── worker service/
+│   ├── Worker/
+│   │   ├── index.js
+│   │   └── .env
+│   ├── container-manager/
+│   │   ├── manager.js
+│   │   └── .env
+│   └── function-runner/
+│       └── runner.js
+├── package.json
 └── README.md
 ```
 
----
+## Requirements
 
-## 🚀 Getting Started
+- Ubuntu terminal
+- Node.js 18 or newer
+- npm
+- Docker
+- RabbitMQ
+- PostgreSQL
 
-### Prerequisites
+Docker Compose is optional. This project can be run using plain Docker commands.
 
-- [Node.js 18+](https://nodejs.org)
-- [Docker](https://www.docker.com)
-- [PostgreSQL](https://www.postgresql.org)
-- [RabbitMQ](https://www.rabbitmq.com)
+## How It Works
 
-### 1. Start RabbitMQ
+### Function Registration Flow
+
+1. User logs in through the frontend
+2. Gateway verifies JWT and accepts function metadata + handler code
+3. Gateway creates a temporary build folder
+4. Gateway writes:
+   - `handler.js`
+   - runtime `runner.js`
+   - `package.json`
+   - `Dockerfile`
+5. Gateway builds a Docker image
+6. Gateway stores function metadata in the registry
+
+### Function Invocation Flow
+
+1. User searches for a function in the frontend
+2. Gateway verifies the function exists and belongs to the logged-in user
+3. Gateway creates a job in the registry
+4. Gateway pushes the job to RabbitMQ
+5. Worker picks the job
+6. Container manager starts or reuses a warm container
+7. Runner executes the handler with JSON payload
+8. Worker updates job result in PostgreSQL
+9. Frontend polls the latest job result and updates the UI
+
+## Ubuntu Setup
+
+Move into the project folder:
 
 ```bash
-docker run -d --name rabbitmq \
+cd "/mnt/c/Users/M K Vasudev/OneDrive/Desktop/iste/Group-A-Cloudfunc/CloudFunc"
+```
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+## Start PostgreSQL In Docker
+
+This README uses PostgreSQL on host port `5433`.
+
+- database: `cloudfunc`
+- username: `postgres`
+- password: `postgres`
+
+Run:
+
+```bash
+docker run -d \
+  --name cloudfunc-postgres \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=cloudfunc \
+  -p 5433:5432 \
+  postgres:16
+```
+
+## Start RabbitMQ In Docker
+
+Run:
+
+```bash
+docker run -d \
+  --name cloudfunc-rabbitmq \
   -p 5672:5672 \
   -p 15672:15672 \
-  rabbitmq:management
+  rabbitmq:3-management
 ```
 
-### 2. Set Up PostgreSQL
+RabbitMQ dashboard:
 
-Create the database and tables:
-
-```sql
-CREATE DATABASE cloudfunc;
-
-\c cloudfunc
-
-CREATE TABLE functions (
-  name        VARCHAR(255) PRIMARY KEY,
-  image_name  VARCHAR(255) NOT NULL,
-  runtime     VARCHAR(50)  NOT NULL DEFAULT 'nodejs',
-  created_at  TIMESTAMP    DEFAULT NOW()
-);
-
-CREATE TABLE jobs (
-  job_id        UUID         PRIMARY KEY,
-  function_name VARCHAR(255) REFERENCES functions(name),
-  payload       TEXT,
-  status        VARCHAR(50)  DEFAULT 'queued',
-  result        TEXT,
-  error         TEXT,
-  attempts      INT          DEFAULT 0,
-  submitted_at  TIMESTAMP    DEFAULT NOW(),
-  completed_at  TIMESTAMP
-);
+```text
+http://localhost:15672
 ```
 
-### 3. Install Dependencies
+Login:
 
-Run `npm install` in each service folder:
-
-```bash
-cd gateway && npm install
-cd ../registry && npm install
-cd ../worker && npm install
-cd ../container-manager && npm install
+```text
+guest / guest
 ```
 
-### 4. Configure Environment
+## Environment Files
 
-Create a `.env` file in each service folder:
+Each service loads its own `.env` file directly, so create the files in the exact folders shown below.
 
-**gateway/.env**
-```
+### `gateway/.env`
+
+```env
 PORT=8080
 REGISTRY_URL=http://localhost:3000
 RABBITMQ_URL=amqp://localhost
+JWT_SECRET=change-this-to-a-long-random-secret
+JWT_TTL_HOURS=12
 ```
 
-**registry/.env**
-```
-PORT=3000
+### `registry/.env`
+
+```env
+REGISTRY_PORT=3000
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5433
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=cloudfunc
 ```
 
-**worker/.env**
-```
+### `worker service/Worker/.env`
+
+```env
 RABBITMQ_URL=amqp://localhost:5672
 REGISTRY_URL=http://localhost:3000
 CONTAINER_URL=http://localhost:4001
 ```
 
-**container-manager/.env**
-```
+### `worker service/container-manager/.env`
+
+```env
 PORT=4001
 REGISTRY_URL=http://localhost:3000
 ```
 
-### 5. Start All Services
+## Run The Platform
 
-Open 4 separate terminals:
-
-```bash
-# Terminal 1 — Registry
-node registry/index.js
-
-# Terminal 2 — Gateway
-node gateway/gateway.js
-
-# Terminal 3 — Container Manager
-node container-manager/container-manager.js
-
-# Terminal 4 — Worker
-node worker/worker.js
-```
-
----
-
-## 🧪 Testing
-
-### Register a Function
+From the project root:
 
 ```bash
-curl -X POST http://localhost:8080/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "add",
-    "runtime": "nodejs",
-    "code": "module.exports = async (input) => { return input.a + input.b; }"
-  }'
+npm start
 ```
 
-Expected response:
-```json
-{
-  "message": "Function registered successfully",
-  "image": "cloudfunc-add:latest"
-}
+This starts:
+
+- Gateway on `http://localhost:8080`
+- Registry on `http://localhost:3000`
+- Container Manager on `http://localhost:4001`
+- Worker service in the background
+
+## Open The Frontend
+
+Go to:
+
+```text
+http://localhost:8080
 ```
 
-### Invoke a Function
+Recommended demo flow:
+
+1. Register a new account
+2. Log in
+3. Register a function using a starter template or custom code
+4. Search for the function in the invoke panel
+5. Provide JSON arguments
+6. Run the function
+7. View updated result and job history
+
+## Auth Model
+
+- Registration and login happen through the gateway
+- Gateway signs JWTs
+- Frontend stores the token in local storage
+- Authenticated frontend APIs automatically send `Authorization: Bearer <token>`
+- Users only see and manage their own functions and jobs by default
+
+## Main API Endpoints
+
+### Auth
+
+- `POST /auth/register`
+- `POST /auth/login`
+- `GET /auth/me`
+
+### Frontend APIs
+
+- `GET /api/dashboard`
+- `GET /api/templates`
+- `GET /api/functions`
+- `GET /api/functions/:name`
+- `POST /api/functions`
+- `DELETE /api/functions/:name`
+- `POST /api/invoke`
+- `GET /api/jobs`
+- `GET /api/jobs/:jobId`
+
+### Legacy Authenticated Routes
+
+- `POST /register`
+- `POST /invoke`
+- `GET /jobs/:jobId`
+
+## Notes
+
+- The registry creates the required schema automatically on startup.
+- Docker must remain available because user functions are built and executed as containers.
+- Function image names are normalized to Docker-safe lowercase names during build.
+- Function deletion removes metadata from the registry, but it does not currently remove built Docker images.
+- The frontend is intentionally focused on the logged-in user’s workspace and recent activity.
+
+## Troubleshooting
+
+### 1. Registry fails to start
+
+Check:
+
+- PostgreSQL container is running
+- `registry/.env` matches the actual Postgres host, port, username, password, and database
+
+Useful command:
 
 ```bash
-curl -X POST http://localhost:8080/invoke \
-  -H "Content-Type: application/json" \
-  -d '{
-    "functionName": "add",
-    "payload": { "a": 5, "b": 3 }
-  }'
+docker logs cloudfunc-postgres
 ```
 
-Expected response:
-```json
-{ "jobId": "85466353-5613-4e16-bb4c-d7da72993b39" }
-```
+### 2. Password authentication failed for user `postgres`
 
-### Check Job Result
+This usually means:
+
+- wrong password in `registry/.env`
+- wrong host port
+- connecting to a different PostgreSQL instance than expected
+
+### 3. Gateway shows `Docker build failed`
+
+Check:
+
+- Docker daemon is running
+- function name is valid
+- Docker has permission to build images
+
+### 4. Frontend loads but registration/invocation fails
+
+Check that all services are running:
+
+- gateway on `8080`
+- registry on `3000`
+- container manager on `4001`
+- RabbitMQ on `5672`
+- PostgreSQL on configured port
+
+## Useful Commands
+
+Check running containers:
 
 ```bash
-curl http://localhost:8080/jobs/85466353-5613-4e16-bb4c-d7da72993b39
+docker ps
 ```
 
-Expected response:
-```json
-{
-  "job_id": "85466353-5613-4e16-bb4c-d7da72993b39",
-  "function_name": "add",
-  "status": "completed",
-  "result": "{\"success\":true,\"result\":8,\"executionTime\":\"3ms\"}",
-  "error": null
-}
-```
-
-### Register a Second Function to Test Warm Containers
+Check PostgreSQL logs:
 
 ```bash
-curl -X POST http://localhost:8080/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "multiply",
-    "runtime": "nodejs",
-    "code": "module.exports = async (input) => { return input.a * input.b; }"
-  }'
+docker logs cloudfunc-postgres
 ```
 
-### Test Duplicate Registration (Should Fail)
+Check RabbitMQ logs:
 
 ```bash
-curl -X POST http://localhost:8080/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "add",
-    "runtime": "nodejs",
-    "code": "module.exports = async (input) => { return input.a + input.b; }"
-  }'
+docker logs cloudfunc-rabbitmq
 ```
 
-Expected response:
-```json
-{
-  "error": "Function 'add' already exists. Use a different name."
-}
+Stop containers:
+
+```bash
+docker stop cloudfunc-postgres cloudfunc-rabbitmq
 ```
 
----
+Remove containers:
 
-## ⚙️ Key Design Decisions
-
-### Warm Container Pool
-Each function gets one long-running Docker container. After the first invocation (cold start), subsequent invocations reuse the same container — skipping Docker startup entirely and reducing execution time from ~2s to under 100ms.
-
-### Runner as Runtime API
-Every function container runs `runner.js` — an Express HTTP server on port 4000. This is the runtime layer between the platform and the user's function. It receives the payload, calls `handler.js`, and returns the result. This is conceptually identical to how AWS Lambda's Runtime API works.
-
-### Asynchronous Execution via RabbitMQ
-Invocations are non-blocking. The client gets a `jobId` immediately and polls for the result. Jobs are durably stored in RabbitMQ so they survive worker restarts.
-
-### Retry with Exponential Backoff
-Failed jobs are retried up to 3 times with delays of 1s, 2s, and 4s between attempts. This handles temporary failures like container startup delays without hammering the system.
-
-### Job Recovery on Startup
-When the worker starts, it fetches all jobs with status `queued` from the database and re-queues them. This ensures no jobs are lost if the worker crashes mid-processing.
-
-### Pre-build Duplicate Check
-Before building a Docker image, the gateway checks if a function with that name already exists in the registry. This avoids wasting time on a Docker build that would ultimately be rejected by the database.
-
----
-
-## 📊 Job Status Flow
-
-```
-queued → running → completed
-                 → failed
+```bash
+docker rm cloudfunc-postgres cloudfunc-rabbitmq
 ```
 
-Status transitions are strictly enforced by the registry. Invalid transitions (e.g. `queued → completed` directly) are rejected with a 400 error.
+## Resume Summary
 
----
+CloudFunc demonstrates:
 
-## 🔌 Port Reference
+- backend service decomposition
+- authenticated API design
+- async job processing with RabbitMQ
+- Docker-based function execution
+- PostgreSQL schema and query design
+- user-focused frontend workflow for cloud function management
 
-| What | Host Port | Container Internal Port |
-|---|---|---|
-| Gateway | 8080 | — |
-| Registry | 3000 | — |
-| Container Manager | 4001 | — |
-| RabbitMQ | 5672 | — |
-| Function containers | 7000, 7001, 7002... | 4000 (always) |
+It is a strong foundation for extending into a more production-ready platform with:
 
-Each function container runs `runner.js` internally on port 4000. The container manager maps a unique host port (starting from 7000) to that internal port so multiple containers can run simultaneously without port conflicts.
+- execution logs
+- richer observability
+- test coverage
+- Docker Compose deployment
+- resource limits and sandbox hardening

@@ -1,5 +1,5 @@
 const express = require("express");
-const pool = require("../db");
+const { pool } = require("../db");
 
 const router = express.Router();
 
@@ -64,11 +64,57 @@ router.post("/", async (req, res) => {
 // ----------------------------
 
 router.get("/", async (req, res) => {
+  const limit = Number(req.query.limit || 50);
+  const status = req.query.status;
+  const functionName = req.query.functionName;
+  const owner = req.query.owner;
+  const search = String(req.query.search || "").trim().toLowerCase();
 
   try {
+    const values = [];
+    const filters = [];
+
+    if (status) {
+      values.push(status);
+      filters.push(`j.status = $${values.length}`);
+    }
+
+    if (functionName) {
+      values.push(functionName);
+      filters.push(`j.function_name = $${values.length}`);
+    }
+
+    if (owner) {
+      values.push(owner);
+      filters.push(`f.owner_username = $${values.length}`);
+    }
+
+    if (search) {
+      values.push(`%${search}%`);
+      filters.push(`(
+        LOWER(j.job_id) LIKE $${values.length}
+        OR LOWER(j.function_name) LIKE $${values.length}
+        OR LOWER(COALESCE(f.owner_username, '')) LIKE $${values.length}
+      )`);
+    }
+
+    values.push(Math.max(1, Math.min(limit, 200)));
+    const whereClause = filters.length ? `WHERE ${filters.join(" AND ")}` : "";
 
     const result = await pool.query(
-      "SELECT * FROM jobs"
+      `
+      SELECT
+        j.*,
+        f.owner_username,
+        f.image_name,
+        f.runtime
+      FROM jobs j
+      LEFT JOIN functions f ON f.name = j.function_name
+      ${whereClause}
+      ORDER BY j.submitted_at DESC
+      LIMIT $${values.length}
+      `,
+      values
     );
 
     res.json(result.rows);
@@ -89,19 +135,34 @@ router.get("/", async (req, res) => {
 // ----------------------------
 
 router.get("/:jobId", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `
+      SELECT
+        j.*,
+        f.owner_username,
+        f.image_name,
+        f.runtime
+      FROM jobs j
+      LEFT JOIN functions f ON f.name = j.function_name
+      WHERE j.job_id = $1
+      `,
+      [req.params.jobId]
+    );
 
-  const result = await pool.query(
-    "SELECT * FROM jobs WHERE job_id = $1",
-    [req.params.jobId]
-  );
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        error: "Job not found"
+      });
+    }
 
-  if (result.rows.length === 0) {
-    return res.status(404).json({
-      error: "Job not found"
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Job lookup error:", error);
+    res.status(500).json({
+      error: "Failed to fetch job"
     });
   }
-
-  res.json(result.rows[0]);
 });
 
 

@@ -1,6 +1,7 @@
+const path = require("path");
+require("dotenv").config({ path: path.join(__dirname, ".env") });
 const amqp = require("amqplib");
 const axios = require("axios");
-require("dotenv").config();
 
 const RABBITMQ_URL = process.env.RABBITMQ_URL || "amqp://localhost:5672";
 const REGISTRY_URL = process.env.REGISTRY_URL || "http://localhost:3000";
