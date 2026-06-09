@@ -131,7 +131,7 @@ Docker Compose is optional. This project can be run using plain Docker commands.
 Move into the project folder:
 
 ```bash
-cd "/mnt/c/Users/M K Vasudev/OneDrive/Desktop/iste/Group-A-Cloudfunc/CloudFunc"
+cd "/mnt/c/Users/Prashasti/OneDrive/Desktop/Cloudfunc/CloudFunc"
 ```
 
 Install dependencies:
